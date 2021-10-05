@@ -18,9 +18,7 @@
                   #2. training set size to construct a confidence bound
 # step 4: construct confidence bound by applying repeated hold-out estimation at determined training set size
 
-getwd()
-load("correlationmatrix.Rdata")
-load("betas_for_simulation_0.85.Rdata")
+
 
 ### main function Learn2Evaluate requires several side functions ###
 source("side functions Learn2Evaluate.R")
@@ -51,8 +49,7 @@ package.check <- lapply(packages,FUN = function(x) {
                         else {
                         library(x, character.only = TRUE)}}
 )
-package.check
-                        
+
 # The function Learn2Evaluate requires the following input
 # 1. X: information about covariates, should be defined as a dataframe
 # 2. y: response variable, should be binary
