@@ -1,5 +1,9 @@
+##########################################################################
+### Computing the predictive performance estimates using the bootstrap ###
+##########################################################################
+
+
 library(glmnet)
-library(randomForest)
 library(randomForestSRC)
 library(pROC)
 library(mvtnorm)
@@ -8,6 +12,7 @@ n_train=200; p=2000;
 B_replicates = 500
 learner = "lasso"
 
+### function to compute AUCs ###
 aucf <- function(resppred, sm=F){
   #resppred <- rfres[[1]][[1]];sm=F
   resp <- resppred[,1]; pred <-resppred[,2]
@@ -15,6 +20,7 @@ aucf <- function(resppred, sm=F){
   return(ci) 
 }
 
+### function to compute bootstrapped bound ###
 bootstrapped_auc <- function(B_replicates, learner,rndnumber,conf.level){
   set.seed(rndnumber)
   X <- rmvnorm(n_train, mean = rep(0,p), sigma = CorrX, method = "chol")
@@ -81,24 +87,28 @@ bootstrapped_auc <- function(B_replicates, learner,rndnumber,conf.level){
 
 library(foreach)
 library(doParallel)
-expo = c('aucf','bootstrapped_auc')
 
+### Description how to use seeds ###
+load("seeds___.Rdata") #load seeds into environment to simulate the same data. Choose for ___ the desired simulation setting.
+# Seeds are structures as follows:
+# seeds_x_y_z:  1. x denotes high or low signal. 0.75 corresponds to lambda=0,001 (low signal) and 0.85 corresponds to lambda=0.01 (high signal)
+#               2. y denotes the learner
+#               3. z denotes the samples size, either N=100, or N=200.
+# Confidence bounds and corresponding true aucs should be computed using the same seeds.
+
+
+
+expo = c('aucf','bootstrapped_auc')
 nc = detectCores()
 cl = makeCluster(nc-1)
 registerDoParallel(cl)
 
-ci_plcs <- foreach(i = 1:length(seeds), .packages = c('mvtnorm','glmnet','multiridge','pROC','randomForestSRC'), 
+ci_boot <- foreach(i = 1:length(seeds), .packages = c('mvtnorm','glmnet','multiridge','pROC','randomForestSRC'), 
                    .export = ls(globalenv()), .inorder = TRUE)  %dopar% {
                      conf_bootstrap <- bootstrapped_auc(B_replicates = B_replicates, rndnumber = seeds2[i],
                                                         learner = learner, conf.level = 0.05)[[2]]
                    }
 stopCluster(cl)
 
-bootconf_lasso_100_0.85  <- list(ci_plcs,seeds)
-
-filenm <- paste("bootconf_0.85","_",learner,"_",n_train,".Rdata", sep="")
-save(bootconf_lasso_100_0.85, file = filenm)
-
-
-
+###########################################################################################################################################3
 

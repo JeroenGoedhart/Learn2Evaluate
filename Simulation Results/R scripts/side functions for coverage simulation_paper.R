@@ -158,9 +158,6 @@ PLCrf <- function(Y,X,nmin=20,nmax=nrow(X)-10,nev = 10,nrep=10, nested=FALSE, fi
   return(list(resall, nseq=nseq, ntot= nrow(X)))
 }
 
-
-
-
 ## function to compute area under the curve
 aucf <- function(resppred, sm=F){
   #resppred <- rfres[[1]][[1]];sm=F
@@ -169,6 +166,7 @@ aucf <- function(resppred, sm=F){
   return(ci) 
 }
 
+## function to compute confidence bound for AUC using DeLong's method
 ci_auc_delong <- function(resppred,sm=F, alpha=0.05){
   #resp <- plc1[[1]][[1]]$respout;pred <- plc1[[1]][[1]]$pred
   resp <- resppred[,1]; pred <-resppred[,2]
@@ -218,14 +216,14 @@ ntrain_bias <- function (powerlaw_results, spline_results, bias) {
   return(list(bias_spline, bias_powerlaw))
 }
 
-# defining function to compute var(AUC)
+## function to compute var(AUC)
 var_AUC <- function(AUC, n1, n2) {
   q1 = AUC/(2-AUC)
   q2 = 2*AUC^2/(1+AUC)
   var = (AUC*(1-AUC) +(n1-1)*(q1-AUC^2) +(n2-1)*(q2-AUC^2))/(n1*n2)
 }
 
-# function to find ntrain that minimizes MSE
+## function to find ntrain that minimizes MSE
 ntrain_MSE <- function (powerlaw_results, spline_results,  n_proportion) {
   training_size <- seq(nmin, nmax ,0.01)
   MSE_powerlaw <- c()
@@ -242,6 +240,8 @@ ntrain_MSE <- function (powerlaw_results, spline_results,  n_proportion) {
   return(list(spline_optim, powerlaw_optim))
 }
 
+## function to compute AUC point estimate by 10-fold CV and a lower confidence bound
+## by using the asymptotic method of Le Dell et al..
 auc_delaan <- function(X,Y, V, learner){
   folds <- cvFolds(Y=Y, V = V)
   predictions <- list()

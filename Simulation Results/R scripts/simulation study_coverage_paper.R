@@ -1,24 +1,17 @@
+############################################################################################################
+### Simulation study to assess coverage of PLC methodology to construct lower bound confidence intervals ###
+############################################################################################################
+
 library(mvtnorm)   # to simulate from a multivariate normal
-library(glmnet)   # to perform lasso/ridge regression
+library(glmnet)   # to fit lasso/ridge regression
 library(randomForest) #to perform random forest
 library(cobs)      # to fit constrained splines 
 library(pROC)      # to calculate the AUC and corresponding confidence interval
 library(foreach)
 library(parallel)
 library(doParallel)
-library(cvAUC)
-library(randomForestSRC)
-### Simulation study to assess coverage of PLC methodology to construct lower bound confidence intervals
-
-
-## The steps:
-#1. Simulate Nsim covariate matrices and responses and 1 very large test data set (N=10000)
-#2. check if the confidence interval contains the true auc value 
-#3. for each dataset construct the predictive learning curve (PLC)
-#4. fit a power law and constrained spline through the points
-#5. determine optimal training size based on 1. bias (2%); 2. minimize MSE
-#6. retrain your model at optimal training size and determine confidence interval
-
+library(cvAUC)  #to apply the method of Le Dell et al.
+library(randomForestSRC) # to fit a random forest
 
 
 ## The data simulation set-up: defining parameters ##
@@ -31,15 +24,16 @@ learner = "rf"
 source('side functions for coverage simulation.R') ##load side functions into environment
 
 
-
+## make sure working directory is set to map containing files below ##
 load("correlationmatrix.Rdata")
-load("betas_for_simulation_0.85.Rdata")# higher signal beta's
-load("betas_for_simulation_0.75.Rdata")# lower signal beta's
+load("betas_for_simulation_0.85.Rdata")# higher signal beta's (lambda = 0,01 in paper)
+load("betas_for_simulation_0.75.Rdata")# lower signal beta's (lambda = 0,001 in paper)
+
+### function to compute predictive performance estimates by Learn2Evaluate and 10-fold CV usng an asymptotic variance estimates (Le Dell et al.)
 plcs <- function(n_train, p, nmin, nev, nrep, nrepcv, learner, rndnumber){
   
 
 ## Step 1: simulate the data ##
-
 
 # simulate design matrix
 set.seed(rndnumber)
@@ -58,11 +52,8 @@ Y_train <- sapply(probs,function(x) rbinom(n=1,size=1,prob=x))
 ci_auc_delaan <- auc_delaan(X = X_train, Y = Y_train, V = 10, learner = learner) #computes estimate by (cross-validation) and confidence interval
 
 
-
 ## step 3: create predictive learning curve ##
-
 #Fit a model to subset of training data and make predictions on left out subset of training data
-
 
 if (learner=="lasso"){
   plcres0 <- PLCregr(Y=Y_train,X=as.matrix(X_train),nmin = nmin, nev=nev, nrep=nrep, nrepcv=nrepcv, alpha=1) ##learning and prediction for lasso
@@ -79,17 +70,15 @@ if (learner=="rf"){
 plcres <- plcres0[[1]]
 nseqtr <- plcres0[[2]]
 
-
-
-#computes AUCs for all training sample sizes (outer lapply), and for all repeats (inner lapply)
+#compute AUCs for all training sample sizes (outer lapply), and for all repeats (inner lapply)
 aucs <- lapply(plcres,function(ex) unlist(lapply(ex,aucf, sm=F)))
 aucsmn <- unlist(lapply(aucs,mean)) #compute mean for all training sizes
-
 
 #store matrix with training sizes and corresponding aucs and confidence bounds 
 allaucsmn <- cbind(Training set Size = nseqtr, AUC = aucsmn) #contains the training sizes (column 1) and corresponding aucs (column 2)
 colnames(allaucsmn) <- c("Training Size", "AUC")
 remove(plcres,plcres0)
+
 
 ## step 4: fit power law and constrained regression spline to data (= training size versus AUC) ##
 
@@ -124,7 +113,7 @@ AUC_preds <- c(AUC_spline_bias,AUC_spline_MSE,AUC_powerl_bias,AUC_powerl_MSE)
 names(optimal_ntrains) <-c("ntrain_spline_bias", "ntrain_spline_mse", 
                            "ntrain_powerl_bias", "ntrain_powerl_mse")
 
-#retrain the models and derive confidence interval
+#retrain the models and derive lower confidence bound
 if (learner=="ridge"){
   auc_and_ci <-list()
   for (i in 1:length(optimal_ntrains)){
@@ -205,38 +194,38 @@ names(allresults) <- c("derived ci's","auc estimates at max ntrain","auc and ci 
 return(allresults) # end result is a list with 2 elements, [[1]]: predicted auc, ci and ntrain of powerlaw and spline for both bias and MSE
 } 
 
-### single computation of optimal confidence interval
+### single computation of predictive performance estimates
 learning_curve <- plcs(n_train = n_train, p=2000, nmin = 10, nev = nev, nrep = nrep, nrepcv = nrepcv, learner = learner, rndnumber = 1)
 learning_curve
 
 
 ### parallel computation ###
-load("seeds_for_simulation_auc_0.85_rf_n200.Rdata")
+############################
+
+### Description how to use seeds ###
+load("seeds___.Rdata") #load seeds into environment to simulate the same data. Choose for ___ the desired simulation setting.
+# Seeds are structures as follows:
+# seeds_x_y_z:  1. x denotes high or low signal. 0.75 corresponds to lambda=0,001 (low signal) and 0.85 corresponds to lambda=0.01 (high signal)
+#               2. y denotes the learner
+#               3. z denotes the samples size, either N=100, or N=200.
+# Confidence bounds and corresponding true aucs should be computed using the same seeds.
+
+
 
 library(foreach)
 library(doParallel)
 expo = c('aucf','ci_auc_delong','ntrain_bias','ntrain_MSE', 
          'PLCregr','plcs','power_law_fit','Splinefitting','Subs', 'var_AUC')
-
 nc = detectCores()
 cl = makeCluster(nc-5)
 registerDoParallel(cl)
-start.time <- proc.time()
+
 ci_plcs <- foreach(i = 1:1000, .packages = c('mvtnorm','glmnet','cobs','pROC','cvAUC','randomForest'), 
                    .export = ls(globalenv()), .inorder = TRUE)  %dopar% {
                       ci_plc <- plcs(n_train = n_train, p = p, nmin = 10, nev = nev, nrep = nrep, nrepcv = nrepcv, 
                                      learner = learner, rndnumber = seeds[i])
                    }
-computeg.time1 <-(proc.time()-start.time)
 stopCluster(cl)
 
 
-
-
-coverage_auc <- list(ci_plcs,seeds)
-
-filenm <- paste("coverage_auc_0.85","_",learner,"_",n_train,".Rdata", sep="")
-save(coverage_auc6, file = filenm)
-
-
-
+################################################################################################################################

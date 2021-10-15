@@ -1,14 +1,30 @@
+###########################################################
+### Computing the true AUC, using a very large test set ###
+###########################################################
+
+
 library(pROC)
 library(cvAUC)
 library(glmnet)
 library(mvtnorm)
 library(randomForest)
-load("seeds.Rdata")
-load("X_test.Rdata")
-load("Y_test_0.75.Rdata")
-load("Y_test_0.85.Rdata")
-load("betas_for_simulation_0.75.Rdata")
-load("betas_for_simulation_0.85.Rdata")
+
+### Description how to use seeds ###
+load("seeds___.Rdata") #load seeds into environment to simulate the same data. Choose for ___ the desired simulation setting.
+# Seeds are structures as follows:
+# seeds_x_y_z:  1. x denotes high or low signal. 0.75 corresponds to lambda=0,001 (low signal) and 0.85 corresponds to lambda=0.01 (high signal)
+#               2. y denotes the learner
+#               3. z denotes the samples size, either N=100, or N=200.
+# Confidence bounds and corresponding true aucs should be computed using the same seeds.
+
+
+
+
+load("X_test.Rdata") #load test data of covariates
+load("Y_test_0.75.Rdata") #load Y_test, check whether the high or low signal situation is required
+#load("Y_test_0.85.Rdata")
+load("betas_for_simulation_0.75.Rdata") #load betas, check whether the high or low signal situation is required
+#load("betas_for_simulation_0.85.Rdata")
 n_train = 100; #number of training samples, will be generated Nsim times  
 p = 2000
 learner <- "lasso"
