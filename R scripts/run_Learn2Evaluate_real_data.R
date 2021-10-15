@@ -3,7 +3,7 @@
 ############################################################################
 
 
-load("Bloodplatelet_RNAseq.Rdata") #loads object dataSqrt into environment
+load("Bloodplatelet_RNAseq.Rdata") #set working directory to data map
 
 ### Short Data Description ###
 #The data consists of RNAseq data obtained from bloodplatelets of in total 274 patients.
@@ -61,15 +61,32 @@ datSqrt2 = datSqrt2[-id.del,]
 datStd = t(apply(datSqrt2,1,function(x){(x-mean(x))/sd(x)}))    
 dim(datStd)
 
-
+remove(dataSqrt,datSqrt2,g1,g2,group,id.del,id1,id2,sds)
 ####  Application ##########
 ############################
 
 #load required functions into environment
-source("side functions Learn2Evaluate.R")
-source("Learn2Evaluate.R")
+source("side functions Learn2Evaluate.R") #set working directory to map containing source scripts
+source("Learn2Evaluate.R") #set working directory to map containing source scripts
 X <-as.data.frame(t(datStd)) #Learn2Evaluate requires X to be a dataframe. (transpose is taken to make sure that rows represent samples)
 
-## function to compute predictive performance estimates with Learn2Evaluate
-L2E <- Learn2Evaluate(X = X, Y=resp, nmin = 20, nev = 10, nrep = 20, nrepcv = 5, 
-                      curve = "IPL", method = "MSE", learner = "rf", Plot = T)
+###### Applying Learn2Evaluate ######
+#####################################
+
+# Code below applies Learn2Evaluate for the three learners: lasso, ridge, and randomforest.
+# The learning curve is fitted by an inverse power law and MSE minimization is used to determine the optimal training size
+L2E_lasso <- Learn2Evaluate(X = X, Y=resp, nmin = 20, nev = 10, nrep = 50, nrepcv = 5, 
+                      curve = "IPL", method = "MSE", learner = "lasso")
+L2E_ridge <- Learn2Evaluate(X = X, Y=resp, nmin = 20, nev = 10, nrep = 50, nrepcv = 5, 
+                               curve = "IPL", method = "MSE", learner = "ridge")
+L2E_rf <- Learn2Evaluate(X = X, Y=resp, nmin = 20, nev = 10, nrep = 50, nrepcv = 5, 
+                                curve = "IPL", method = "MSE", learner = "rf")
+
+###### Plotting the Curves ######
+#################################
+
+#Code to plott the curve
+PlotCurve(L2E_lasso, Add = F) # for first plot set "Add" to FALSE, because it is the first plot
+PlotCurve(L2E_ridge, Add = T) # If you want to add the curve to existing plot, keep "Add" to TRUE. If you only want to see the curve for ridge, change to "Add = FALSE"
+PlotCurve(L2E_rf, Add = T) # If you want to add the curve to existing plot, keep "Add" to TRUE. If you only want to see the curve for ridge, change to "Add = FALSE"
+ 

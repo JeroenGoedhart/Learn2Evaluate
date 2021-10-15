@@ -51,114 +51,56 @@ Subs <- function(Y,model="logistic",balance=TRUE,ntrain,fixedsubs=TRUE,nrepeat=1
 }
 
 #PLCs for regularized regression (ridge, lasso, Elastic Net)
-PLCregr <- function(Y,X,nmin=20,nmax=N-10,nev = nev, nrepcv=nrepcv,nfolds=5, nrep=nrep, nested=FALSE,alpha = alpha, fixedsubs=TRUE){ #alpha =1: lasso; alpha = 0: ridge
-  #Y<- resp;X<- t(datStd);nmin=20;nmax=nrow(X)-10;nev = 10; nrepcv=3;nrep=5;fixedsubs=TRUE;nested <- FALSE
-  nseq <- round(seq(nmin,nmax,length.out=nev))
-  print("Sub sample sizes to be evaluated:")
-  print(nseq)
-  resall <- list()
-  #perfridge_mn <-   perflasso_mn <- perfrf_mn <- perfridge2_mn <-   perflasso2_mn <- perfrf2_mn <- c()
-  
-  #First: create the subsamples; for all learners the same subsamples are used
-  for(nseqi in nseq){
-    # nseqi <- nseq[2]
-    print(paste("Sample size",nseqi))
-    if(nested){
-      if(nseqi == nseq[1]) subsamp <- Subs(Y=Y,model="logistic",balance=TRUE,ntrain=nseqi,fixedsubs=fixedsubs,nrepeat=nrep) else {
-        nremove <- nseqi - nseqprev
-        subsamp <- lapply(subsamp,function(ind) {set.seed(24234); el <- length(ind); return(ind[-sample(1:el,nremove)])})
-      }
-      nseqprev <- nseqi 
-    } else {
-      subsamp <- Subs(Y=Y,model="logistic",balance=TRUE,ntrain=nseqi,fixedsubs=TRUE,nrepeat=nrep)
-    }
-    
-    print("Cross-validating tuning parameters")
-    lams <- c()
-    for(k in 1:nrepcv){
-      samout <- subsamp[[k]]
-      Xtr <- X[-samout,]
-      Xte <- X[samout,]
-      respin <- Y[-samout]
-      respout <- Y[samout]
-      cvreg <- cv.glmnet(Xtr,respin,alpha=alpha,family="binomial", nfolds=nfolds, type.measure="deviance")
-      lams <- c(lams,cvreg$lambda.min)
-      
-    }
-    lam <- median(lams)
-    
-    
-    res <-list()
-    for(k in 1:nrep){
-      #k <-1
-      print(paste("REPEAT",k))
-      samout <- subsamp[[k]]
-      Xtr <- X[-samout,]
-      Xte <- X[samout,]
-      respin <- Y[-samout]
-      respout <- Y[samout]
-      
-      regfit <- glmnet(Xtr,respin,alpha=alpha,family="binomial")
-      pred <- as.numeric(predict(regfit, newx=Xte,s=lam, type="response"))
-      res<- c(res,list(cbind(respout=respout,pred=pred)))
-    }
-    resall <- c(resall,list(res))
+PLCregr <- function(Y,X, nfolds=5, alpha = alpha,nrepcv=5,nrep=50, subs = Subsamp){ #alpha =1: lasso; alpha = 0: ridge
+  lams <- c()
+  for(k in 1:nrepcv){
+    samout <- subs[[k]]
+    Xtr <- X[-samout,]
+    Xte <- X[samout,]
+    respin <- Y[-samout]
+    respout <- Y[samout]
+    cvreg <- suppressWarnings(cv.glmnet(Xtr,respin,alpha=alpha,family="binomial", nfolds=nfolds, type.measure="deviance"))
+    lams <- c(lams,cvreg$lambda.min)
   }
-  return(list(resall, nseq=nseq, ntot= nmax))
+  
+  lam <- median(lams)
+  res <-list()
+  for(k in 1:nrep){
+    #k <-1
+    samout <- subs[[k]]
+    Xtr <- X[-samout,]
+    Xte <- X[samout,]
+    respin <- Y[-samout]
+    respout <- Y[samout]
+    regfit <- glmnet(Xtr,respin,alpha=alpha,family="binomial")
+    pred <- as.numeric(predict(regfit, newx=Xte,s=lam, type="response"))
+    res[[k]]<- cbind(respout=respout,pred=pred)
+  }
+  return(res)
 }
 
 #PLCs for Random Forest
-PLCrf <- function(Y,X,nmin=20,nmax=nrow(X)-10,nev = 10,nrep=10, nested=FALSE, fixedsubs=TRUE){
-  #X<- t(datStd);nmin=20;nmax=nrow(X)-10;nev = 10; nrepcv=3;nrep=5;learners = c("lasso","ridge","rf");nested <- FALSE
-  resp<-factor(Y)
-  nseq <- round(seq(nmin,nmax,length.out=nev))
-  print("Sub sample sizes to be evaluated:")
-  print(nseq)
-  resall <- list()
-  #perfridge_mn <-   perflasso_mn <- perfrf_mn <- perfridge2_mn <-   perflasso2_mn <- perfrf2_mn <- c()
-  
-  #First: create the subsamples; for all learners the same subsamples are used
-  for(nseqi in nseq){
-    # nseqi <- nseq[2]
-    print(paste("Sample size",nseqi))
-    if(nested){
-      if(nseqi == nseq[1]) subsamp <- Subs(Y=resp,model="logistic",balance=TRUE,ntrain=nseqi,fixedsubs=fixedsubs,nrepeat=nrep) else {
-        nremove <- nseqi - nseqprev
-        subsamp <- lapply(subsamp,function(ind) {set.seed(24234); el <- length(ind); return(ind[-sample(1:el,nremove)])})
-      }
-      
-      nseqprev <- nseqi 
-    } else {
-      subsamp <- Subs(Y=resp,model="logistic",balance=TRUE,ntrain=nseqi,fixedsubs=TRUE,nrepeat=nrep)
-    }
-    
-    res <-list()
-    for(k in 1:nrep){
-      #k <-1
-      print(paste("REPEAT",k))
-      samout <- subsamp[[k]]
-      Xtr <- X[-samout,]
-      Xte <- X[samout,]
-      respin <- resp[-samout]
-      respout <- resp[samout]
-      
-      # rid <- cv.glmnet(Xtr,respin,alpha=0,family="cox", type.measure="deviance")
-      # lam <- rid$lambda.min
-      databoth <- data.frame(respin,Xtr)
-      rrfit <- rfsrc(respin ~ ., mtry=sqrt(ncol(X)), var.used="all.trees",ntree=100, data = databoth, importance="none")
-      predrf <- predict(rrfit, newdata = data.frame(Xte), importance = F)$predicted[,2]
-      res <- c(res,list(cbind(respout=as.numeric(respout)-1,pred=predrf)))
-    }
-    resall <- c(resall,list(res))
+PLCrf <- function(Y,X,nrep=50, subs = Subsamp){
+  res <-list()
+  for(k in 1:nrep){
+    samout <- subs[[k]]
+    Xtr <- X[-samout,]
+    Xte <- X[samout,]
+    respin <- resp[-samout]
+    respout <- resp[samout]
+    databoth <- data.frame(respin,Xtr)
+    rrfit <- rfsrc(respin ~ ., mtry=sqrt(ncol(X)), var.used="all.trees",ntree=100, data = databoth, importance="none")
+    pred <- predict(rrfit, newdata = data.frame(Xte), importance = F)$predicted[,2]
+    res[[k]]<- cbind(respout=as.numeric(respout)-1,pred=pred)
   }
-  return(list(resall, nseq=nseq, ntot= nrow(X)))
+  return(res)
 }
 
 ## function to compute Area under the receiver operating curve (AUC)
 aucf <- function(resppred, sm=F){
   #resppred <- rfres[[1]][[1]];sm=F
   resp <- resppred[,1]; pred <-resppred[,2]
-  ci <- as.numeric(pROC::auc(resp,pred,smooth=sm)) 
+  ci <- suppressMessages(as.numeric(pROC::auc(resp,pred,smooth=sm)))  
   return(ci) 
 }
 

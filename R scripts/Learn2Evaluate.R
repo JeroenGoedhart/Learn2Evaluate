@@ -2,6 +2,7 @@
 ####################   Learn2Evaluate   ####################################
 ############################################################################
 
+
 # This script contains the main function "Learn2Evaluate" to estimate the predictive performance
 # by employing learning curves. The function is for now limited to the AUC as performance measure. 
 # Only lasso, ridge, and random forest may be used as a predictive model 
@@ -21,7 +22,7 @@
 
 
 ### main function Learn2Evaluate requires several side functions ###
-source("side functions Learn2Evaluate.R")
+source("side functions Learn2Evaluate.R") #set working directory to map containing source scripts
 ## Those side functions are:
 # 1.  PLCregr
 # 2.  PLCrf
@@ -40,9 +41,10 @@ source("side functions Learn2Evaluate.R")
 #2. cobs: to fit a constrained regression spline learning curve
 #3. glmnet: to fit a lasso or a ridge
 #4. randomforestSRC: to fit a random forest
+#5. R.utils: progress bar
 
 packages = c("pROC", "cobs",
-             "glmnet", "randomForestSRC")
+             "glmnet", "randomForestSRC","R.utils")
 package.check <- lapply(packages,FUN = function(x) {
                         if (!require(x, character.only = TRUE)) {
                         install.packages(x, dependencies = TRUE)}
@@ -60,7 +62,7 @@ package.check <- lapply(packages,FUN = function(x) {
 # 7. curve: fit of the learning curve. Can be either "IPL" (=inverse power law) or "CRS" (=constrained regression spline)
 # 8. learner: The learner you want to use. For now, the only possibilities are: 1. "ridge", 2. "lasso", 3. "rf" (=random forest).
 # 9. method: the method to determine the optimal training set size to construct a confidence bound. Can be either "bias" (=allow 2% margin on empirical bias) or "MSE" (= minimize MSE w.r.t. training set size)
-# 10. Plot: do you want to plot the learning curve (yes = TRUE, no = FALSE)
+
 
 
 # Running the function yields the following output in a list:
@@ -68,11 +70,13 @@ package.check <- lapply(packages,FUN = function(x) {
 # [[2]]: AUC confidence bound [1]: without bias correction, [2]: with bias correction
 # [[3]]: the training set size at which the confidence bounds are constructed
 # [[4]]: the learning trajectory, i.e. the repeated hold-out AUC point estimates at different training set sizes
+# [[5]]: large matrix of data points that can be used to plot the learning curve
+# [[6]]: the used details of Learn2Evaluate, it specifies the number of repeats of each subsample size, the method to fit the learning curve, the method to determine the optimal training size, and the learner.
 
 #####################################################################################################################################
 #####################################################################################################################################
 Learn2Evaluate <- function(X=NULL, Y=NULL, nmin = 20, nev = 10, nrep = 50, nrepcv = 5, 
-                           curve = "IPL", learner = "rf", method = "MSE", Plot = TRUE) {
+                           curve = "IPL", learner = "lasso", method = "MSE") {
   
   # control statements
   if(length(X)==0) {stop("Covariates not defined")}
@@ -81,7 +85,7 @@ Learn2Evaluate <- function(X=NULL, Y=NULL, nmin = 20, nev = 10, nrep = 50, nrepc
   if(is.factor(Y)) {Y <-as.numeric(Y)-1}
   if(!all(Y==1 | Y==0)) {stop("Response should be numeric and a 0 - 1 variable")}
   if(!nrow(X)==length(Y)) {stop("Sample size response and covariates should match")}
-  #if(nrow(X) < 70) {stop("Sample size should be at least N = 70")}
+  if(nrow(X) < 70) {stop("Sample size should be at least N = 70")}
   if(nev < 6) {stop("Number of different training set sizes should be more than 5")}
   if(nrep < 20) {stop("Number of repeats should be at least 20")}
   if(!(curve == "IPL" || curve =="CRS")) {stop("Curve fit not correctly specified, should be IPL or CRS")}
@@ -89,32 +93,60 @@ Learn2Evaluate <- function(X=NULL, Y=NULL, nmin = 20, nev = 10, nrep = 50, nrepc
   if(!(method == "MSE" || method =="Bias")) {stop("Method not correctly specified, should be MSE or Bias")}
   
   
+  
   #####  STEP 1  #####
   
-  print("Step 1: Computing repeated hold-out estimates at different training set sizes")
+  nseq <- round(seq(nmin,nrow(X)-10,length.out=nev)) #subsamples to evaluate, homogeneously spread over sample size regime
+  resall <- list() #empty list to store all predictions and corresponding responses
   ## computing the predicted outcomes on test set (=hold-out set) for different training set sizes and for each training set size nrep times
+  pb = utils::txtProgressBar(min = 1, max = nev+1,
+                             style = 3, width = 50,
+                             title = 'Running Learn2Evaluate.....')
   if(learner == "lasso") {
-    plcres0 <-PLCregr(Y=Y,X=as.matrix(X), nmin = nmin, nev=nev, nmax=nrow(X)-10, nrep=nrep, nrepcv=nrepcv, alpha=1)}
-  
-  if(learner == "ridge") {
-    plcres0 <- PLCregr(Y=Y,X=as.matrix(X), nmin=nmin, nev=nev, nmax=nrow(X)-10, nrep=nrep, nrepcv=nrepcv, alpha=0)}
-  
-  if (learner == "rf") {
-    plcres0 <- PLCrf(Y = Y, X = X, nmin = nmin, nev = nev, nmax = nrow(X) - 10, nrep=nrep)
+    X <- as.matrix(X)
+    for (i in 1:nev) {
+      utils::setTxtProgressBar(pb, i)
+      Subsamp <- Subs(Y=Y,model="logistic",balance=TRUE,ntrain=nseq[i],fixedsubs=TRUE,nrepeat=nrep)
+      plcres0 <-PLCregr(Y=Y,X=X, nfolds=5,nrepcv = nrepcv, alpha=1,nrep = nrep, subs = Subsamp)
+      resall[[i]] <- plcres0
+      names(resall)[i] <- as.character(nseq[i])
+    }
   }
 
-  plcres <- plcres0[[1]]   # a list of lists containing for each nev (list 1) and nrep (list 2) the predictions and responses of the hold-out set
-  nseqtr <- plcres0[[2]]   # contains the different training set sizes
-  aucs <- lapply(plcres,function(ex) unlist(lapply(ex,aucf, sm=F))) #computes for each response, prediction combination the AUC
+  if(learner == "ridge") {
+    X <- as.matrix(X)
+    resall <- list()
+    for (i in 1:nev) {
+      utils::setTxtProgressBar(pb, i)
+      Subsamp <- Subs(Y=Y,model="logistic",balance=TRUE,ntrain=nseq[i],fixedsubs=TRUE,nrepeat=nrep)
+      plcres0 <-PLCregr(Y=Y,X= X, nfolds=5,nrepcv = nrepcv, alpha=0,nrep = nrep, subs = Subsamp)
+      resall[[i]] <- plcres0
+      names(resall)[i] <- as.character(nseq[i])
+    }
+  }
+    
+  
+  if (learner == "rf") {
+    Y<-factor(Y)
+    resall <- list()
+    for (i in 1:nev) {
+      utils::setTxtProgressBar(pb, i)
+      Subsamp <- Subs(Y=Y,model="logistic",balance=TRUE,ntrain=nseq[i],fixedsubs=TRUE,nrepeat=nrep)
+      plcres0 <-PLCrf(Y=Y,X= X, nrep = nrep, subs = Subsamp)
+      resall[[i]] <- plcres0
+      names(resall)[i] <- as.character(nseq[i])
+    }
+  }
+
+  aucs <- lapply(resall,function(ex) unlist(lapply(ex,aucf, sm=F))) #computes for each response, prediction combination the AUC
   
   ## computing the average AUC (repeated hold-out estimate based on nrep AUCs) for each training set size
   aucsmn <- unlist(lapply(aucs,mean)) 
-  allaucsmn <- cbind(ntrain = nseqtr, AUC = aucsmn) #data points to fit the learning curve: column1 consists of the training set sizes and column 2 consists of the corresponding AUC estimates
+  allaucsmn <- cbind(ntrain = nseq, AUC = aucsmn) #data points to fit the learning curve: column1 consists of the training set sizes and column 2 consists of the corresponding AUC estimates
   
   
   #####  STEP 2  #####
   
-  print("Step 2: Fitting the learning curve")
   if (curve == "IPL") {
   LearningCurve <- PowerlawFit(ntrain = allaucsmn[,1], aucs = allaucsmn[,2], nmin = nmin, nmax = nrow(X))
   }
@@ -125,7 +157,6 @@ Learn2Evaluate <- function(X=NULL, Y=NULL, nmin = 20, nev = 10, nrep = 50, nrepc
   
   #####  STEP 3  #####
   
-  print("Step 1: Obtaining details from learning curve")
   ## 1. Obtaining AUC point estimate from learning curve  
   point_estimate <- max(LearningCurve[,2]) 
   
@@ -144,9 +175,6 @@ Learn2Evaluate <- function(X=NULL, Y=NULL, nmin = 20, nev = 10, nrep = 50, nrepc
   
   #####  STEP 4  #####
   
-  print("Step 4: Constructing the confidence bound")
-  # definining training sets of size n_opt 
-  print("Determining Confidence Bound")
   subsamp <-Subs(Y=Y, model = "logistic", balance = T, 
                  ntrain =opt_n[1], fixedsubs = T,nrepeat = nrep)
   ci_aucs <-c() #empty vector to store all confidence bounds
@@ -173,7 +201,7 @@ Learn2Evaluate <- function(X=NULL, Y=NULL, nmin = 20, nev = 10, nrep = 50, nrepc
       regfit <- glmnet(Xtr,respin,alpha=0,family="binomial") #fitting the model
       pred <- as.numeric(predict(regfit, newx=Xte,s=lam, type="response")) #obtaining predictions on test set
       resppred <-cbind(respout,pred)
-      ci_aucs[k] <- ci_auc_delong(resppred = resppred,sm=F,alpha = 0.05) #computing lower confidence bound for auc
+      ci_aucs[k] <- suppressMessages(ci_auc_delong(resppred = resppred,sm=F,alpha = 0.05)) #computing lower confidence bound for auc
     }
   }
   if (learner=="lasso"){
@@ -199,7 +227,7 @@ Learn2Evaluate <- function(X=NULL, Y=NULL, nmin = 20, nev = 10, nrep = 50, nrepc
       regfit <- glmnet(Xtr,respin,alpha=1,family="binomial") #fitting the model
       pred <- as.numeric(predict(regfit, newx=Xte,s=lam, type="response")) #obtaining predictions on test set
       resppred <-cbind(respout,pred)
-      ci_aucs[k] <- ci_auc_delong(resppred = resppred,sm=F,alpha = 0.05) #computing lower confidence bound for AUC
+      ci_aucs[k] <- suppressMessages(ci_auc_delong(resppred = resppred,sm=F,alpha = 0.05)) #computing lower confidence bound for AUC
     }
   }
     
@@ -216,25 +244,65 @@ Learn2Evaluate <- function(X=NULL, Y=NULL, nmin = 20, nev = 10, nrep = 50, nrepc
       rrfit <- rfsrc(respin ~ ., mtry=mtryp, var.used="all.trees",ntree=100, data = databoth, importance="none") #fitting the model
       predrf <- predict(rrfit, newdata = Xte, importance = F)$predicted[,2] #obtaining predictions on test set 
       resppred <-cbind(respout,predrf)
-      ci_aucs[k] <- ci_auc_delong(resppred = resppred,sm=F,alpha = 0.05) #computing lower confidence bound for AUC
+      ci_aucs[k] <-suppressMessages(ci_auc_delong(resppred = resppred,sm=F,alpha = 0.05)) #computing lower confidence bound for AUC
     }
   }
   ci_auc <- mean(ci_aucs); names(ci_auc) <- "ConfBound"
   ci_auc_bc <- ci_auc +(point_estimate - opt_n[2]) ; names(ci_auc_bc) <- "BC_ConfBound"
   conf_bound <- c(ci_auc,ci_auc_bc)
-  
-  ###  Plotting The Learning Curve and AUC estimates  ###
-  if (Plot == T) {
-  p <- plot(allaucsmn[,1],allaucsmn[,2], xlim=c(nmin,nrow(X)), ylim=c(0.5,1), pch = 16,
-            xlab="Training Size", ylab="AUC", family = "serif", font.lab=2, font=2, cex.lab=1.1) #plotting the learning trajectory
-  p <- lines(LearningCurve[,1],LearningCurve[,2], col="red", lwd=2.5) #plotting the fitted learning curve
-  p <- points(x=nrow(X),y=point_estimate, col = "black", pch =8, lwd=2) #plotting the point estimate of Learn2Evaluate
-  p <- points(x=nrow(X),y=ci_auc,col = "black", pch =24, bg="black") #plotting confidence bound of Learn2Evaluate
-  p <- points(x=nrow(X),y=ci_auc_bc ,col = "black", pch =25, bg="black") #plotting bias corrected confidence bound
-  }
+  utils::setTxtProgressBar(pb, nev+1)
   
   
-  
-  results <- list(AUC = point_estimate, ConfidenceBounds = conf_bound, TrainingSetSize = opt_n[1], LearningTrajectory = allaucsmn)      
+  results <- list(AUC = point_estimate, 
+                  ConfidenceBounds = conf_bound, 
+                  TrainingSetSize = opt_n[1], 
+                  LearningTrajectory = allaucsmn, 
+                  LearningCurve = LearningCurve, 
+                  details = c(nrep = nrep, curve = curve, method = method, learner = learner))      
   return(results)
 }
+###################################################################################################################################################################################################
+
+######  Plotting The Learning Curve and AUC repeated hold-out estimates  #####
+##############################################################################
+
+# Function to plot the curve. As input the list object of the main function Learn2Evaluate is required.
+# Additionally, the input Add (=F, =T) is required.
+# This specifies whether you want to add a curve to an already existing plot, so that you can compare different learners.
+# Only Add=T if you already have a learning curve plotted in your R studio environment.
+
+PlotCurve <- function(Learn2Evaluate, Add = F){
+  if(Add == TRUE & is.null(dev.list()['RStudioGD'])) {stop("Cannot add to empty plot")}
+  ##obtaining details from Learn2Evaluate object
+  aucs <- Learn2Evaluate[[4]]
+  learner <- Learn2Evaluate[[6]][4]
+  LearningCurve <- Learn2Evaluate[[5]]
+  point_estimate <- Learn2Evaluate[[1]]
+  ConfBound <- Learn2Evaluate[[2]][1]
+  BC_ConfBound <- Learn2Evaluate[[2]][2]
+  nmax <- max(aucs[,1])+10
+  nmin <- min(aucs[,1])
+  
+  if (learner == "lasso") {col = "#395D9CFF"; pos = nmax}
+  if (learner == "ridge") {col = "#0B0405FF";pos = nmax+2}
+  if (learner == "rf") {col = "#60CEACFF";pos = nmax-2}
+  
+  if (Add == F) {
+    p <- plot(aucs[,1],aucs[,2], xlim=c(nmin,nmax), ylim=c(0.5,1), pch = 16, col = col,
+              xlab="Training Size", ylab="AUC", family = "serif", font.lab=2, font=2, cex.lab=1.1) #plotting the learning trajectory
+    p <- lines(LearningCurve[,1],LearningCurve[,2], col=col, lwd=2.5) #plotting the fitted learning curve
+    p <- points(x=nmax,y=point_estimate, col = col, pch =8, lwd=2) #plotting the point estimate of Learn2Evaluate
+    p <- points(x=pos,y=ConfBound,col = col, pch =24, bg=col) #plotting confidence bound of Learn2Evaluate
+    p <- points(x=pos,y=BC_ConfBound ,col = col, pch =25, bg=col) #plotting bias corrected confidence bound
+  }
+    
+  if (Add == T) {
+    p <- points(aucs[,1],aucs[,2], pch = 16, col=col) #plotting the learning trajectory
+    p <- lines(LearningCurve[,1],LearningCurve[,2], col=col, lwd=2.5) #plotting the fitted learning curve
+    p <- points(x=nmax,y=point_estimate, col = col, pch =8, lwd=2) #plotting the point estimate of Learn2Evaluate
+    p <- points(x=pos,y=ConfBound,col = col, pch =24, bg=col) #plotting confidence bound of Learn2Evaluate
+    p <- points(x=pos,y=BC_ConfBound ,col = col, pch =25, bg=col) #plotting bias corrected confidence bound
+  }
+}
+    
+
