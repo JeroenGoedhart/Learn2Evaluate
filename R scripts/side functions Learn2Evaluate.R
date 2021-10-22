@@ -86,8 +86,8 @@ PLCrf <- function(Y,X,nrep=50, subs = Subsamp){
     samout <- subs[[k]]
     Xtr <- X[-samout,]
     Xte <- X[samout,]
-    respin <- resp[-samout]
-    respout <- resp[samout]
+    respin <- Y[-samout]
+    respout <- Y[samout]
     databoth <- data.frame(respin,Xtr)
     rrfit <- rfsrc(respin ~ ., mtry=sqrt(ncol(X)), var.used="all.trees",ntree=100, data = databoth, importance="none")
     pred <- predict(rrfit, newdata = data.frame(Xte), importance = F)$predicted[,2]
