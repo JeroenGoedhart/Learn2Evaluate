@@ -304,5 +304,5 @@ PlotCurve <- function(Learn2Evaluate, Add = F){
     p <- points(x=pos,y=BC_ConfBound ,col = col, pch =25, bg=col) #plotting bias corrected confidence bound
   }
 }
-    
+
 
