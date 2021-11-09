@@ -43,8 +43,7 @@ source("side functions Learn2Evaluate.R") #set working directory to map containi
 #4. randomforestSRC: to fit a random forest
 #5. R.utils: progress bar
 
-packages = c("pROC", "cobs",
-             "glmnet", "randomForestSRC","R.utils")
+packages = c("pROC","cobs","glmnet", "randomForestSRC","R.utils")
 package.check <- lapply(packages,FUN = function(x) {
                         if (!require(x, character.only = TRUE)) {
                         install.packages(x, dependencies = TRUE)}
