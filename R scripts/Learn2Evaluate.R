@@ -61,7 +61,7 @@ package.check <- lapply(packages,FUN = function(x) {
 # 7. curve: fit of the learning curve. Can be either "IPL" (=inverse power law) or "CRS" (=constrained regression spline)
 # 8. learner: The learner you want to use. For now, the only possibilities are: 1. "ridge", 2. "lasso", 3. "rf" (=random forest).
 # 9. method: the method to determine the optimal training set size to construct a confidence bound. Can be either "bias" (=allow 2% margin on empirical bias) or "MSE" (= minimize MSE w.r.t. training set size)
-
+# 10. measure: which performance measure is of interest. Can be either "AUC" or "PMSE" (mean square error of prediction)
 
 
 # Running the function yields the following output in a list:
@@ -70,19 +70,19 @@ package.check <- lapply(packages,FUN = function(x) {
 # [[3]]: the training set size at which the confidence bounds are constructed
 # [[4]]: the learning trajectory, i.e. the repeated hold-out AUC point estimates at different training set sizes
 # [[5]]: large matrix of data points that can be used to plot the learning curve
-# [[6]]: the used details of Learn2Evaluate, it specifies the number of repeats of each subsample size, the method to fit the learning curve, the method to determine the optimal training size, and the learner.
+# [[6]]: the used details of Learn2Evaluate, it specifies the number of repeats of each subsample size, the method to fit the learning curve, the method to determine the optimal training size, the learner, and the performance metric.
 
 #####################################################################################################################################
 #####################################################################################################################################
 Learn2Evaluate <- function(X=NULL, Y=NULL, nmin = 20, nev = 10, nrep = 50, nrepcv = 5, 
-                           curve = "IPL", learner = "lasso", method = "MSE") {
+                           curve = "IPL", learner = "lasso", method = "MSE", measure = "AUC") {
   
   # control statements
   if(length(X)==0) {stop("Covariates not defined")}
   if(length(Y)==0) {stop("Response not defined")}
   if (!(is.data.frame(X))) {stop("Data should be a data frame")}
   if(is.factor(Y)) {Y <-as.numeric(Y)-1}
-  if(!all(Y==1 | Y==0)) {stop("Response should be numeric and a 0 - 1 variable")}
+  #if(!all(Y==1 | Y==0)) {stop("Response should be numeric and a 0 - 1 variable")}
   if(!nrow(X)==length(Y)) {stop("Sample size response and covariates should match")}
   if(nrow(X) < 70) {stop("Sample size should be at least N = 70")}
   if(nev < 6) {stop("Number of different training set sizes should be more than 5")}
@@ -90,7 +90,7 @@ Learn2Evaluate <- function(X=NULL, Y=NULL, nmin = 20, nev = 10, nrep = 50, nrepc
   if(!(curve == "IPL" || curve =="CRS")) {stop("Curve fit not correctly specified, should be IPL or CRS")}
   if(!(learner == "lasso" || learner =="ridge" || learner =="rf")) {stop("Learner not correctly specified, should be ridge, lasso, or rf")}
   if(!(method == "MSE" || method =="Bias")) {stop("Method not correctly specified, should be MSE or Bias")}
-  
+  if(!(measure == "PMSE" || measure =="AUC")) {stop("Performance measure not correctly specified, should be AUC or PMSE")}
   
   
   #####  STEP 1  #####
@@ -101,24 +101,43 @@ Learn2Evaluate <- function(X=NULL, Y=NULL, nmin = 20, nev = 10, nrep = 50, nrepc
   pb = utils::txtProgressBar(min = 1, max = nev+1,
                              style = 3, width = 50,
                              title = 'Running Learn2Evaluate.....')
+  if (measure == "AUC") {
+    model = "logistic"
+    distr = "binomial"
+    balance = T
+    metric = "increasing"
+    constraints = c("increase", "concave")
+  }
+  if (measure == "PMSE") {
+    model = "linear"
+    distr = "gaussian"
+    balance = F
+    metric = "decreasing"
+    constraints = c("decrease","convex")
+  }
+  
   if(learner == "lasso") {
+    print("lasso")
     X <- as.matrix(X)
     for (i in 1:nev) {
       utils::setTxtProgressBar(pb, i)
-      Subsamp <- Subs(Y=Y,model="logistic",balance=TRUE,ntrain=nseq[i],fixedsubs=TRUE,nrepeat=nrep)
-      plcres0 <-PLCregr(Y=Y,X=X, nfolds=5,nrepcv = nrepcv, alpha=1,nrep = nrep, subs = Subsamp)
+      Subsamp <- Subs(Y=Y,model=model,balance=balance,ntrain=nseq[i],fixedsubs=TRUE,nrepeat=nrep)
+      plcres0 <-PLCregr(Y=Y,X=X, nfolds=5,nrepcv = nrepcv, alfa=1, nrep = nrep, subs = Subsamp,
+                        family = distr)
       resall[[i]] <- plcres0
       names(resall)[i] <- as.character(nseq[i])
     }
   }
 
   if(learner == "ridge") {
+    print("ridge")
     X <- as.matrix(X)
     resall <- list()
     for (i in 1:nev) {
       utils::setTxtProgressBar(pb, i)
-      Subsamp <- Subs(Y=Y,model="logistic",balance=TRUE,ntrain=nseq[i],fixedsubs=TRUE,nrepeat=nrep)
-      plcres0 <-PLCregr(Y=Y,X= X, nfolds=5,nrepcv = nrepcv, alpha=0,nrep = nrep, subs = Subsamp)
+      Subsamp <- Subs(Y=Y,model=model,balance=balance,ntrain=nseq[i],fixedsubs=TRUE,nrepeat=nrep)
+      plcres0 <-PLCregr(Y=Y,X= X, nfolds=5,nrepcv = nrepcv, alfa=0,nrep = nrep, subs = Subsamp,
+                        family = distr)
       resall[[i]] <- plcres0
       names(resall)[i] <- as.character(nseq[i])
     }
@@ -126,138 +145,178 @@ Learn2Evaluate <- function(X=NULL, Y=NULL, nmin = 20, nev = 10, nrep = 50, nrepc
     
   
   if (learner == "rf") {
-    Y<-factor(Y)
+    print("rf")
+    if(measure =="AUC"){Y <- factor(Y)}
     resall <- list()
     for (i in 1:nev) {
       utils::setTxtProgressBar(pb, i)
-      Subsamp <- Subs(Y=Y,model="logistic",balance=TRUE,ntrain=nseq[i],fixedsubs=TRUE,nrepeat=nrep)
-      plcres0 <-PLCrf(Y=Y,X= X, nrep = nrep, subs = Subsamp)
+      Subsamp <- Subs(Y=Y,model=model,balance=balance,ntrain=nseq[i],fixedsubs=TRUE,nrepeat=nrep)
+      plcres0 <-PLCrf(Y=Y,X= X, nrep = nrep, subs = Subsamp, measure = measure)
       resall[[i]] <- plcres0
       names(resall)[i] <- as.character(nseq[i])
     }
   }
-
-  aucs <- lapply(resall,function(ex) unlist(lapply(ex,aucf, sm=F))) #computes for each response, prediction combination the AUC
+  if (measure == "AUC"){
+  estimates <- lapply(resall,function(ex) unlist(lapply(ex,aucf, sm=F))) #computes for each response, prediction combination the AUC
   
   ## computing the average AUC (repeated hold-out estimate based on nrep AUCs) for each training set size
-  aucsmn <- unlist(lapply(aucs,mean)) 
-  allaucsmn <- cbind(ntrain = nseq, AUC = aucsmn) #data points to fit the learning curve: column1 consists of the training set sizes and column 2 consists of the corresponding AUC estimates
+  estimatesmn <- unlist(lapply(estimates,mean)) 
+  LearnCurve <- cbind(ntrain = nseq, AUC = estimatesmn) #data points to fit the learning curve: column1 consists of the training set sizes and column 2 consists of the corresponding AUC estimates
+  }
   
+  if (measure == "PMSE") {
+  estimates <- lapply(resall,function(ex) unlist(lapply(ex,pMSE)))
+  estimatesmn <- unlist(lapply(estimates,mean))
+  LearnCurve <- cbind(training_size = nseq, pMSE = estimatesmn)
+  }
   
   #####  STEP 2  #####
   
   if (curve == "IPL") {
-  LearningCurve <- PowerlawFit(ntrain = allaucsmn[,1], aucs = allaucsmn[,2], nmin = nmin, nmax = nrow(X))
+  LearningCurve <- PowerlawFit(ntrain = LearnCurve[,1], estimates = LearnCurve[,2], nmin = nmin, nmax = nrow(X), metric = metric)
   }
   if (curve == "CRS") {
-    LearningCurve <- SplineFit(ntrain = allaucsmn[,1], aucs = allaucsmn[,2], constraint = c("increase", "concave"), nmin = nmin, nmax = nrow(X))
+    LearningCurve <- SplineFit(ntrain = LearnCurve[,1], estimates = LearnCurve[,2], constraint = constraints, nmin = nmin, nmax = nrow(X))
   }
   
   
   #####  STEP 3  #####
   
-  ## 1. Obtaining AUC point estimate from learning curve  
-  point_estimate <- max(LearningCurve[,2]) 
-  
+  ## 1. Obtaining AUC point estimate from learning curve
+  if (measure == "AUC") {
+  point_estimate <- max(LearningCurve[,2])}
+  if (measure == "PMSE") {
+  point_estimate <- min(LearningCurve[,2])}
   
   ## 2. Determining a good training set size to construct a confidence bound
   # done by either MSE minimization (method = MSE) or bias control (method = Bias)
-
-  if (method == "MSE"){
-    opt_n <- ntrain_MSE(learning_curve = LearningCurve ,n_proportion = length(which(Y==1))/length(Y))
-  }
   if (method == "Bias"){
-    opt_n <- ntrain_bias(learning_curve = LearningCurve, bias = 0.02)
+    opt_n <- ntrain_bias(learning_curve = LearningCurve, bias = 0.02, metric = metric)
   }
+  if (method == "MSE"){
+    if (measure == "AUC"){
+    opt_n <- ntrain_MSE_AUC(learning_curve = LearningCurve ,n_proportion = length(which(Y==1))/length(Y))
+    }
+    if (measure == "PMSE"){
+    opt_n <- ntrain_MSE_pMSE(learning_curve = LearningCurve)
+    }
+  }
+  
   # opt_n contains the determined training set size with the corresponding learning curve AUC estimate at this training set size
   
   
   #####  STEP 4  #####
+  Subsamp <- Subs(Y=Y,model=model,balance=balance,ntrain=opt_n[1],fixedsubs=TRUE,nrepeat=nrep)
   
-  subsamp <-Subs(Y=Y, model = "logistic", balance = T, 
-                 ntrain =opt_n[1], fixedsubs = T,nrepeat = nrep)
-  ci_aucs <-c() #empty vector to store all confidence bounds
+  cis <-c() #empty vector to store all confidence bounds
   if (learner=="ridge"){
     X <- as.matrix(X)
     # determining penalty parameter by repeated cross-validation
     lams <- c()
     for(k in 1:nrepcv){
-      samout <- subsamp[[k]]
+      samout <- Subsamp[[k]]
       Xtr <- X[-samout,]
       respin <- Y[-samout]
-      cvreg <- cv.glmnet(Xtr,respin,alpha=0,family="binomial", nfolds=10, type.measure="deviance")
+      cvreg <- cv.glmnet(Xtr,respin,alpha=0,family=distr, nfolds=10, type.measure="deviance")
       lams <- c(lams,cvreg$lambda.min)
     }
     lam <- median(lams) #estimated penalty parameter
     
     # determining final confidence bound by training and testing model with determined penalty parameter
     for(k in 1:nrep){
-      samout <- subsamp[[k]]
+      samout <- Subsamp[[k]]
       Xtr <- X[-samout,] #training
       Xte <- X[samout,]  #testing
       respin <- Y[-samout] #training
       respout <- Y[samout] #testing
-      regfit <- glmnet(Xtr,respin,alpha=0,family="binomial") #fitting the model
+      regfit <- glmnet(Xtr,respin,alpha=0,family=distr) #fitting the model
       pred <- as.numeric(predict(regfit, newx=Xte,s=lam, type="response")) #obtaining predictions on test set
       resppred <-cbind(respout,pred)
-      ci_aucs[k] <- suppressMessages(ci_auc_delong(resppred = resppred,sm=F,alpha = 0.05)) #computing lower confidence bound for auc
+      if (measure == "AUC"){
+      cis[k] <- suppressMessages(ci_auc_delong(resppred = resppred,sm=F,alpha = 0.05)) #computing lower confidence bound for auc
+      }
+      if (measure == "PMSE"){
+        pMSE <- pMSE(resppred)
+        n <- length(resppred[,1])
+        cis[k] <- ci_pMSE(pMSE = pMSE, deg_free = n)[2]
+      }
     }
   }
-  if (learner=="lasso"){
+  if (learner =="lasso"){
     X <- as.matrix(X)
     # determining penalty parameter
     lams <- c() #empty vector to store penalty parameters (nrepcv in total)
     for(k in 1:nrepcv){
-      samout <- subsamp[[k]]
+      samout <- Subsamp[[k]]
       Xtr <- X[-samout,]
       respin <- Y[-samout]
-      cvreg <- cv.glmnet(Xtr,respin,alpha=1,family="binomial", nfolds=10, type.measure="deviance")
+      cvreg <- cv.glmnet(Xtr,respin,alpha=1,family=distr, nfolds=10, type.measure="deviance")
       lams <- c(lams,cvreg$lambda.min)
     }
     lam <- median(lams) #estimated penalty parameter
     
     # determining final confidence bound by training and testing model with determined penalty parameter
     for(k in 1:nrep){
-      samout <- subsamp[[k]]
+      samout <- Subsamp[[k]]
       Xtr <- X[-samout,] #training
       Xte <- X[samout,]  #testing
       respin <- Y[-samout] #training
       respout <- Y[samout] #testing
-      regfit <- glmnet(Xtr,respin,alpha=1,family="binomial") #fitting the model
+      regfit <- glmnet(Xtr,respin,alpha=1,family=distr) #fitting the model
       pred <- as.numeric(predict(regfit, newx=Xte,s=lam, type="response")) #obtaining predictions on test set
       resppred <-cbind(respout,pred)
-      ci_aucs[k] <- suppressMessages(ci_auc_delong(resppred = resppred,sm=F,alpha = 0.05)) #computing lower confidence bound for AUC
+      #computing lower confidence bound for AUC
+      if (measure == "AUC"){
+        cis[k] <- suppressMessages(ci_auc_delong(resppred = resppred,sm=F,alpha = 0.05)) #computing lower confidence bound for auc
+      }
+      if (measure == "PMSE"){
+        pMSE <- pMSE(resppred)
+        n <- length(resppred[,1])
+        cis[k] <- ci_pMSE(pMSE = pMSE, deg_free = n)[2]
+      }
     }
   }
     
   if (learner=="rf"){
-    Y <- factor(Y) #used random forest package requires binary variable to be a factor
+    if(measure =="AUC"){Y <- factor(Y)} #used random forest package requires binary variable to be a factor
     for (k in 1:nrep) {
-      samout <- subsamp[[k]]
+      samout <- Subsamp[[k]]
       Xtr <- X[-samout,] #training
       Xte <- X[samout,]  #testing
       respin <- Y[-samout] #training
       respout <- Y[samout] #testing
       databoth <- data.frame(respin,Xtr) #required for random forest package
-      if(ncol(X)>=1000) mtryp <- sqrt(ncol(X)) else mtryp <- ncol(X)/3
+      if(ncol(X)>=1000) {mtryp <- sqrt(ncol(X))} else {mtryp <- ncol(X)/3}
       rrfit <- rfsrc(respin ~ ., mtry=mtryp, var.used="all.trees",ntree=100, data = databoth, importance="none") #fitting the model
-      predrf <- predict(rrfit, newdata = Xte, importance = F)$predicted[,2] #obtaining predictions on test set 
+      if (measure == "AUC"){
+      predrf <- predict(rrfit, newdata = Xte, importance = F)$predicted[,2]} #obtaining predictions on test set 
+      if (measure=="PMSE"){
+      predrf <- predict(rrfit, newdata = Xte, importance = F)$predicted} 
       resppred <-cbind(respout,predrf)
-      ci_aucs[k] <-suppressMessages(ci_auc_delong(resppred = resppred,sm=F,alpha = 0.05)) #computing lower confidence bound for AUC
+      #computing lower confidence bound for AUC or PMSE
+      if (measure == "AUC"){
+        cis[k] <- suppressMessages(ci_auc_delong(resppred = resppred,sm=F,alpha = 0.05)) #computing lower confidence bound for auc
+      }
+      if (measure == "PMSE"){
+        pMSE <- pMSE(resppred)
+        n <- length(resppred[,1])
+        cis[k] <- ci_pMSE(pMSE = pMSE, deg_free = n)[2]
+      }
     }
   }
-  ci_auc <- mean(ci_aucs); names(ci_auc) <- "ConfBound"
-  ci_auc_bc <- ci_auc +(point_estimate - opt_n[2]) ; names(ci_auc_bc) <- "BC_ConfBound"
-  conf_bound <- c(ci_auc,ci_auc_bc)
+  ci <- median(cis); names(ci) <- "ConfBound"
+  ci_bc <- ci +(point_estimate - opt_n[2])
+  names(ci_bc) <- "BC_ConfBound"
+  conf_bound <- c(ci,ci_bc)
   utils::setTxtProgressBar(pb, nev+1)
   
   
-  results <- list(AUC = point_estimate, 
+  results <- list(PointEstimate = point_estimate, 
                   ConfidenceBounds = conf_bound, 
                   TrainingSetSize = opt_n[1], 
-                  LearningTrajectory = allaucsmn, 
+                  LearningTrajectory = LearnCurve, 
                   LearningCurve = LearningCurve, 
-                  details = c(nrep = nrep, curve = curve, method = method, learner = learner))      
+                  details = c(nrep = nrep, curve = curve, method = method, learner = learner, measure = measure))      
   return(results)
 }
 ###################################################################################################################################################################################################
@@ -281,14 +340,18 @@ PlotCurve <- function(Learn2Evaluate, Add = F){
   BC_ConfBound <- Learn2Evaluate[[2]][2]
   nmax <- max(aucs[,1])+10
   nmin <- min(aucs[,1])
-  
-  if (learner == "lasso") {col = "#395D9CFF"; pos = nmax}
-  if (learner == "ridge") {col = "#0B0405FF";pos = nmax+2}
+  measure <- Learn2Evaluate[[6]][5]
+  if (measure == "AUC"){ylim = c(0.5,1)}
+  if (measure == "PMSE"){ylim =c(0,ConfBound+0.1)}
+  if (measure == "AUC"){ylab = "AUC"}
+  if (measure == "PMSE"){ylab = "PMSE"}
+  if (learner == "lasso") {col = "#395D9CFF"; pos = nmax+2}
+  if (learner == "ridge") {col = "#0B0405FF";pos = nmax}
   if (learner == "rf") {col = "#60CEACFF";pos = nmax-2}
   
   if (Add == F) {
-    p <- plot(aucs[,1],aucs[,2], xlim=c(nmin,nmax), ylim=c(0.5,1), pch = 16, col = col,
-              xlab="Training Size", ylab="AUC", family = "serif", font.lab=2, font=2, cex.lab=1.1) #plotting the learning trajectory
+    p <- plot(aucs[,1],aucs[,2], xlim=c(nmin,nmax+1), ylim=ylim, pch = 16, col = col,
+              xlab="Training Size", ylab=ylab, family = "serif", font.lab=2, font=2, cex.lab=1.1) #plotting the learning trajectory
     p <- lines(LearningCurve[,1],LearningCurve[,2], col=col, lwd=2.5) #plotting the fitted learning curve
     p <- points(x=nmax,y=point_estimate, col = col, pch =8, lwd=2) #plotting the point estimate of Learn2Evaluate
     p <- points(x=pos,y=ConfBound,col = col, pch =24, bg=col) #plotting confidence bound of Learn2Evaluate
