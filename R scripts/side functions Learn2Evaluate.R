@@ -223,7 +223,7 @@ ntrain_bias <- function (learning_curve, bias = 0.02, metric = "increasing") {
   if (metric == "decreasing"){
     PointEstimate <- min(learning_curve[,2])
     # selecting bias value
-    nopt <- learning_curve[learning_curve[,2] < (1+bias)*PointEstimate,][1,] #determines the optimal training set size and corresponding AUC value
+    nopt <- learning_curve[learning_curve[,2] < (1-bias)*PointEstimate,][1,] #determines the optimal training set size and corresponding PMSE value
   }
   return(nopt)
 }
